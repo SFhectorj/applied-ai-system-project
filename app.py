@@ -222,7 +222,8 @@ st.subheader("🤖 AI Care Advisor")
 st.caption(
     "Retrieves pet-care guidance for each pet's species, age and special needs, then "
     "suggests tasks grounded in it and checks they fit your day. Uses Claude when "
-    "ANTHROPIC_API_KEY is set, otherwise built-in guidance."
+    "ANTHROPIC_API_KEY is set, otherwise built-in guidance. "
+    "General suggestions only, not veterinary advice: confirm medications and diets with your vet."
 )
 
 

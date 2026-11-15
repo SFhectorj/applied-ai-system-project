@@ -43,7 +43,7 @@ pet profile -> Retriever -> Generator (Claude | offline) -> Guardrails -> Self-c
 Requires Python 3.10+.
 
 ```bash
-git clone <this repo> && cd applied-ai-system-final
+git clone https://github.com/SFhectorj/applied-ai-system-project && cd applied-ai-system-final
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -115,11 +115,11 @@ Mia: Interactive play session              15 min MEDIUM  won't fit today
 
 ## Testing summary
 
-**Headline: 57/57 unit tests pass and 10/10 eval scenarios pass (offline mode). The eval's first run was 5/6: a rabbit got no advice at all, which led to a fix and a regression test. The live-Claude eval has not been run yet.** Mean retrieval confidence was 0.25 across the 6 pet scenarios.
+**Headline: 61/61 unit tests pass and 10/10 eval scenarios pass (offline mode). The eval's first run was 5/6: a rabbit got no advice at all, which led to a fix and a regression test. The live-Claude eval has not been run yet.** Mean retrieval confidence was 0.25 across the 6 pet scenarios.
 
 Four reliability mechanisms are in place:
 
-1. **Automated tests** (`python -m pytest`): 44 original scheduler tests plus 13 in `tests/test_advisor.py` (species/age filtering, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM returning valid, hallucinated, garbage and failing output, time-clash repair, overflow flagging, confidence bounds, empty owner).
+1. **Automated tests** (`python -m pytest`): 44 original scheduler tests plus 17 in `tests/test_advisor.py` (species/age filtering, negated special needs, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM returning valid, hallucinated, garbage and failing output, time-clash repair, overflow flagging, confidence bounds, empty owner).
 2. **Scenario eval** (`python eval_advisor.py`): runs the advisor end to end and writes `eval_results.json`. With `--llm` each scenario runs 3 times to measure consistency.
 3. **Confidence scoring**: each suggestion carries `confidence`, the TF-IDF cosine similarity between the pet's profile and the passage it cites (0-1). Suggestions below 0.10 are labelled "low confidence" in the UI. The score is a relative signal, not a calibrated probability: special-needs matches score highest (insulin for the diabetic cat: 0.29) and generic ones lowest (cat play: 0.05).
 4. **Logging and error handling** (`pawpal.log`): retrieval scores, LLM request ids and token counts, every rejected suggestion with the reason, and every fallback to offline mode. Model errors, refusals and malformed JSON degrade to offline suggestions with a warning instead of crashing.

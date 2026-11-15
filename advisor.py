@@ -72,11 +72,26 @@ def life_stage(species: str, age: int) -> str:
     return "adult"
 
 
+_NEGATIONS = {"no", "not", "non", "without", "never", "denies", "free"}
+
+
+def need_text(special_needs: str) -> str:
+    """Special-needs text with negated phrases removed.
+
+    "no known allergies" or "not diabetic" must not be read as having the
+    condition. Any clause that contains a negation word is dropped whole
+    (clauses split on commas, semicolons, "and" and "but"). Crude, but it errs
+    toward *not* inventing a medical condition.
+    """
+    clauses = re.split(r",|;|\band\b|\bbut\b", special_needs.lower())
+    return " ".join(c for c in clauses if not _NEGATIONS & set(re.findall(r"[a-z]+", c)))
+
+
 def build_query(pet: Pet) -> str:
     """Retrieval query from the pet's profile (special needs weigh most)."""
     species = SPECIES_HINTS.get(pet.species, pet.species)
-    return " ".join([species, life_stage(pet.species, pet.age),
-                     pet.special_needs, pet.special_needs])
+    needs = need_text(pet.special_needs)
+    return " ".join([species, life_stage(pet.species, pet.age), needs, needs])
 
 
 def _covered(rec_title: str, rec_category: str, pet: Pet) -> bool:
@@ -188,7 +203,7 @@ def validate(raw: dict, pet: Pet, allowed: dict[str, Passage]) -> Suggestion:
 def offline_generate(pet: Pet, passages: list[Passage]) -> list[dict]:
     """Deterministic generator: turns retrieved passages into suggestions."""
     out = []
-    needs = set(tokenize(pet.special_needs))
+    needs = set(tokenize(need_text(pet.special_needs)))
     for p in passages:
         rec = dict(p.recommendation)
         matched = needs & set(tokenize(p.searchable()))

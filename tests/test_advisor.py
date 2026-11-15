@@ -125,3 +125,14 @@ def test_confidence_is_reported_and_bounded(kb):
 def test_no_pets_gives_no_suggestions(kb):
     r = CareAdvisor(kb, use_llm=False).advise(Owner("J", 60))
     assert r.suggestions == [] and r.warnings == []
+
+
+@pytest.mark.parametrize("need", ["no known allergies", "not diabetic", "Healthy, no arthritis"])
+def test_negated_special_needs_are_not_treated_as_conditions(kb, need):
+    r = CareAdvisor(kb, use_llm=False).advise(owner_with(Pet("P", "cat", 4, need)))
+    assert not ids(r) & {"med-allergy", "med-diabetes", "med-arthritis"}
+
+
+def test_affirmed_need_next_to_negated_one_is_kept(kb):
+    r = CareAdvisor(kb, use_llm=False).advise(owner_with(Pet("P", "dog", 5, "arthritis, no allergies")))
+    assert "med-arthritis" in ids(r) and "med-allergy" not in ids(r)
