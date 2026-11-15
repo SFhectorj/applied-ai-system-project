@@ -254,7 +254,7 @@ if advice:
             fit = "✅ fits today" if s.fits else "⚠️ won't fit today"
             st.markdown(
                 f"**{s.pet_name}: {s.title}** ({s.duration_minutes} min, {PRIORITY_BADGE[s.priority]}, "
-                f"{s.frequency}{', ' + s.preferred_time if s.preferred_time else ''}) {fit}"
+                f"{s.frequency}{', ' + s.preferred_time if s.preferred_time else ''}) {fit} · confidence {s.confidence:.2f}"
             )
             st.caption(f"{s.rationale} _Source: {s.source_id}_" + "".join(f" · {n}" for n in s.notes))
         with c2:

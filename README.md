@@ -35,7 +35,7 @@ pet profile -> Retriever -> Generator (Claude | offline) -> Guardrails -> Self-c
 | Self-check (agentic step) | `advisor.py: _check()` | Simulates the plan on a copy of the owner's data, clears preferred times that clash, flags suggestions that won't fit. |
 | Scheduling engine | `pawpal_system.py` | The original PawPal+ logic. Approved suggestions become ordinary `Task`s here. |
 | UI | `app.py` | Streamlit app with the "AI Care Advisor" section and an **Add** button per suggestion (the human checkpoint). |
-| Testing | `tests/`, `eval_advisor.py` | 55 unit tests plus a scenario eval that measures retrieval correctness and consistency. |
+| Testing | `tests/`, `eval_advisor.py` | 57 unit tests plus a scenario eval that measures retrieval correctness and consistency. |
 | Logging | `logging_setup.py` | `pawpal.log` records retrieval scores, LLM request ids and token counts, and rejected suggestions. |
 
 ## Setup instructions
@@ -115,19 +115,37 @@ Mia: Interactive play session              15 min MEDIUM  won't fit today
 
 ## Testing summary
 
-| Layer | What it covers | Result |
-|-------|----------------|--------|
-| `tests/test_pawpal.py` (44) | Original scheduler: sorting, recurrence, conflicts, planning, validation | All pass |
-| `tests/test_advisor.py` (11) | Species/age filtering, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM (valid, hallucinated and failing output), time-clash repair, overflow flagging | All pass |
-| `eval_advisor.py` | 6 pet scenarios: right passages cited, wrong species/age excluded, special-needs tasks high priority, repeated runs consistent | 6/6 offline |
+**Headline: 57/57 unit tests pass and 10/10 eval scenarios pass (offline mode). The eval's first run was 5/6: a rabbit got no advice at all, which led to a fix and a regression test. The live-Claude eval has not been run yet.** Mean retrieval confidence was 0.25 across the 6 pet scenarios.
 
-**What worked.** Injecting a fake LLM made the model path testable without network calls, and the citation check reliably catches hallucinated sources. Filtering by species and age before ranking kept results clean.
+Four reliability mechanisms are in place:
 
-**What didn't, at first.** The eval's first run failed for pet species `other`: the query contained the word "other", which matched nothing in the knowledge base, so a rabbit got no advice at all. I fixed it by expanding that species into habitat-related words in the query (`SPECIES_HINTS`) and added a regression test.
+1. **Automated tests** (`python -m pytest`): 44 original scheduler tests plus 13 in `tests/test_advisor.py` (species/age filtering, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM returning valid, hallucinated, garbage and failing output, time-clash repair, overflow flagging, confidence bounds, empty owner).
+2. **Scenario eval** (`python eval_advisor.py`): runs the advisor end to end and writes `eval_results.json`. With `--llm` each scenario runs 3 times to measure consistency.
+3. **Confidence scoring**: each suggestion carries `confidence`, the TF-IDF cosine similarity between the pet's profile and the passage it cites (0-1). Suggestions below 0.10 are labelled "low confidence" in the UI. The score is a relative signal, not a calibrated probability: special-needs matches score highest (insulin for the diabetic cat: 0.29) and generic ones lowest (cat play: 0.05).
+4. **Logging and error handling** (`pawpal.log`): retrieval scores, LLM request ids and token counts, every rejected suggestion with the reason, and every fallback to offline mode. Model errors, refusals and malformed JSON degrade to offline suggestions with a warning instead of crashing.
 
-**Not yet verified.** I have not run `eval_advisor.py --llm` against the live API, so Claude's consistency and quality are untested; the offline numbers above do not speak to them. The knowledge base is small and was not veterinarian-reviewed, so the advisor should be read as a reminder tool, not medical advice.
+### Eval results (`eval_advisor.py`, offline mode)
 
-**What I learned.** An eval is worth building early: it found a real bug that unit tests with hand-picked inputs had missed. Testing the guardrails matters more than testing the model, because the guardrails are what you control.
+| Test input | Evaluation criteria | Mean confidence | Result |
+|---|---|---|---|
+| Diabetic cat (age 4) | Cites `med-diabetes`, task is high priority, no dog guidance | 0.13 | Pass |
+| Arthritic senior dog (age 10) | Cites `med-arthritis`, high priority, no puppy/cat guidance | 0.21 | Pass |
+| Puppy (age 0) | Cites `dog-puppy`, excludes senior and adult-exercise guidance | 0.19 | Pass |
+| Adult indoor cat | Cites litter box and play, no dog guidance | 0.13 | Pass |
+| Rabbit (species `other`) | Cites `other-habitat` | 0.64 | Pass (Fail on first run: returned nothing) |
+| Anxious dog | Cites `med-anxiety`, no cat guidance | 0.20 | Pass |
+| Owner with no pets | Returns no suggestions, no crash | n/a | Pass |
+| Nonsense special needs (`qwertyuiop zxcvbnm`) | Falls back to normal dog guidance, nothing invented | n/a | Pass |
+| Prompt-injection text in special needs | All suggestions stay valid (1-240 min, cited) | n/a | Pass |
+| Zero available minutes | Warns instead of silently dropping high-priority tasks | n/a | Pass |
+
+**What worked.** Injecting a fake LLM made the model path testable without network calls, and the citation check reliably catches hallucinated sources. Filtering by species and age before ranking kept results clean. The prompt-injection and nonsense inputs are handled because model output is validated in code rather than trusted.
+
+**What didn't, at first.** For species `other` the query contained the word "other", which matched nothing in the knowledge base, so the rabbit got no advice. I fixed it by expanding that species into habitat words (`SPECIES_HINTS`) and added a regression test. Confidence is also low in absolute terms (0.13-0.21 for most pets) because lexical matching over short passages gives small cosine scores, so the 0.10 threshold is only a rough guide.
+
+**Not yet verified.** `eval_advisor.py --llm` has not been run against the live API, so Claude's consistency and suggestion quality are unmeasured, and the offline results above don't speak to them. The eval checks which guidance is cited, not whether the advice is medically right; the knowledge base is small and not veterinarian-reviewed. A human review of Claude's output should be added as a table here once it exists.
+
+**What I learned.** An eval is worth building early: it found a real bug that hand-picked unit tests missed. Testing the guardrails matters more than testing the model, because the guardrails are what you control.
 
 ## Reflection
 

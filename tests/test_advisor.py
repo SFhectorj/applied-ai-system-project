@@ -113,3 +113,15 @@ def test_check_repairs_time_clash_and_flags_overflow(kb):
 def test_other_species_gets_habitat_guidance(kb):
     r = CareAdvisor(kb, use_llm=False).advise(owner_with(Pet("Bun", "other", 2)))
     assert "other-habitat" in ids(r)
+
+
+def test_confidence_is_reported_and_bounded(kb):
+    r = CareAdvisor(kb, use_llm=False).advise(owner_with(Pet("Tom", "cat", 4, "diabetes")))
+    assert r.suggestions and all(0 < s.confidence <= 1 for s in r.suggestions)
+    top = next(s for s in r.suggestions if s.source_id == "med-diabetes")
+    assert top.confidence == max(s.confidence for s in r.suggestions)
+
+
+def test_no_pets_gives_no_suggestions(kb):
+    r = CareAdvisor(kb, use_llm=False).advise(Owner("J", 60))
+    assert r.suggestions == [] and r.warnings == []

@@ -26,6 +26,7 @@ log = logging.getLogger("pawpal.advisor")
 
 MODEL = os.environ.get("PAWPAL_MODEL", "claude-opus-5-5")
 MAX_SUGGESTIONS_PER_PET = 5
+LOW_CONFIDENCE = 0.10  # below this, suggestions are labelled as weak matches
 _TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
@@ -40,6 +41,7 @@ class Suggestion:
     preferred_time: str
     source_id: str
     rationale: str
+    confidence: float = 0.0  # retrieval similarity (0-1) of the cited passage
     fits: bool | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -224,6 +226,7 @@ class CareAdvisor:
             log.info("no new guidance for %s", pet.name)
             return []
         allowed = {p.id: p for p in passages}
+        scores = {p.id: sc for p, sc in hits}
         raws = None
         if self.llm:
             try:
@@ -241,6 +244,9 @@ class CareAdvisor:
             except ValueError as exc:
                 log.warning("rejected suggestion for %s: %s | %r", pet.name, exc, raw)
                 continue
+            s.confidence = round(min(scores[s.source_id], 1.0), 2)
+            if s.confidence < LOW_CONFIDENCE:
+                s.notes.append(f"low confidence ({s.confidence}): weak match to the pet's profile")
             key = (s.title.lower(), s.category)
             if key not in seen:
                 seen.add(key)

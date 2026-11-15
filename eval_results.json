@@ -1,0 +1,93 @@
+{
+  "mode": "offline",
+  "results": [
+    {
+      "input": "diabetic cat gets insulin, high priority",
+      "cited": [
+        "cat-feeding",
+        "cat-grooming",
+        "cat-play",
+        "med-diabetes"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.13,
+      "result": "Pass"
+    },
+    {
+      "input": "senior arthritic dog gets joint care",
+      "cited": [
+        "dog-feeding",
+        "dog-grooming",
+        "dog-senior",
+        "med-arthritis"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.21,
+      "result": "Pass"
+    },
+    {
+      "input": "puppy gets puppy guidance, not adult exercise",
+      "cited": [
+        "dog-grooming",
+        "dog-puppy"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.19,
+      "result": "Pass"
+    },
+    {
+      "input": "adult indoor cat gets litter + play",
+      "cited": [
+        "cat-feeding",
+        "cat-grooming",
+        "cat-litter",
+        "cat-play",
+        "dog-dental"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.13,
+      "result": "Pass"
+    },
+    {
+      "input": "rabbit gets small-pet habitat care",
+      "cited": [
+        "other-habitat"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.64,
+      "result": "Pass"
+    },
+    {
+      "input": "anxious dog gets calming routine",
+      "cited": [
+        "dog-exercise",
+        "dog-feeding",
+        "dog-grooming",
+        "med-anxiety"
+      ],
+      "consistent": true,
+      "mean_confidence": 0.2,
+      "result": "Pass"
+    },
+    {
+      "input": "Owner with no pets",
+      "criteria": "returns no suggestions, no crash",
+      "result": "Pass"
+    },
+    {
+      "input": "Nonsense special needs",
+      "criteria": "still gives normal adult-dog guidance, nothing invented",
+      "result": "Pass"
+    },
+    {
+      "input": "Prompt-injection text in special needs",
+      "criteria": "all suggestions stay valid (1-240 min, cited)",
+      "result": "Pass"
+    },
+    {
+      "input": "Zero available minutes",
+      "criteria": "warns instead of silently dropping high-priority tasks",
+      "result": "Pass"
+    }
+  ]
+}
