@@ -1,0 +1,111 @@
+
+==============================================================================
+END-TO-END CASE 1: diabetic cat, relaxed day
+==============================================================================
+[1 INPUT]
+  pet=Tom (cat, age 4) needs='diabetes' existing=[]
+  owner has 90 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Tom: query='cat adult diabetes diabetes'
+    0.29  [med-diabetes] Diabetes and insulin
+    0.11  [cat-feeding] Cat feeding and water
+    0.07  [cat-grooming] Cat brushing
+[3 GENERATE + VALIDATE] mode=offline, 4 suggestions kept
+  Tom: Give insulin with meal (10 min, high) conf=0.29 cites [med-diabetes]
+      why: Tom's special needs (diabetes) match: Diabetes and insulin.
+  Tom: Feed cat and refresh water (5 min, high) conf=0.11 cites [cat-feeding]
+      why: Cat feeding and water: Adult cats do well on two measured meals daily, with wet food helping hydration.
+  Tom: Interactive play session (15 min, medium) conf=0.05 cites [cat-play]
+      why: Play and enrichment for cats: Indoor cats need two or more play sessions of 10 to 15 minutes daily, ideally with a wand toy that mimics hunting.
+  Tom: Brush cat (5 min, low) conf=0.07 cites [cat-grooming]
+      why: Cat brushing: Brushing a cat a few times a week reduces hairballs and shedding, and lets you spot lumps or skin problems early.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Give insulin with meal: fits today
+  Feed cat and refresh water: fits today | 07:00 clashed with another task; time cleared
+  Interactive play session: fits today | low confidence (0.05): weak match to the pet's profile
+  Brush cat: fits today | low confidence (0.07): weak match to the pet's profile
+[5 OWNER APPROVES] (simulated click on Add) 4 of 4 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Tom  Give insulin with meal                10 min  [high]
+  [x] 19:00  Tom  Interactive play session              15 min  [medium]
+  [x] --:--  Tom  Feed cat and refresh water             5 min  [high]
+  [x] --:--  Tom  Brush cat                              5 min  [low]
+  total 35 of 90 min
+
+==============================================================================
+END-TO-END CASE 2: senior arthritic dog who already has a walk
+==============================================================================
+[1 INPUT]
+  pet=Rex (dog, age 10) needs='arthritis' existing=['Morning walk']
+  owner has 60 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Rex: query='dog senior old aging arthritis arthritis'
+    0.38  [dog-senior] Senior dog joint care
+    0.32  [med-arthritis] Arthritis and mobility
+    0.09  [dog-feeding] Dog feeding schedule
+[3 GENERATE + VALIDATE] mode=offline, 3 suggestions kept
+  Rex: Give joint supplement (5 min, high) conf=0.32 cites [med-arthritis]
+      why: Rex's special needs (arthritis) match: Arthritis and mobility.
+  Rex: Feed breakfast (10 min, high) conf=0.09 cites [dog-feeding]
+      why: Dog feeding schedule: Adult dogs do best with two measured meals a day, about 12 hours apart.
+  Rex: Brush coat (10 min, low) conf=0.06 cites [dog-grooming]
+      why: Coat and nail care: Brush dogs weekly (daily for long coats) and trim nails every 3 to 4 weeks.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Give joint supplement: fits today | 08:00 clashed with another task; time cleared
+  Feed breakfast: fits today | low confidence (0.09): weak match to the pet's profile
+  Brush coat: fits today | low confidence (0.06): weak match to the pet's profile
+[5 OWNER APPROVES] (simulated click on Add) 3 of 3 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Rex  Feed breakfast                        10 min  [high]
+  [x] 08:00  Rex  Morning walk                          20 min  [high]
+  [x] --:--  Rex  Give joint supplement                  5 min  [high]
+  [x] --:--  Rex  Brush coat                            10 min  [low]
+  total 45 of 60 min
+
+==============================================================================
+END-TO-END CASE 3: two pets, only 20 minutes, negated condition
+==============================================================================
+[1 INPUT]
+  pet=Bun (other, age 2) needs='' existing=[]
+  pet=Mia (cat, age 3) needs='no known allergies' existing=[]
+  owner has 20 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Bun: query='other small pet habitat cage water clean adult  '
+    0.64  [other-habitat] Small pets and exotics
+  Mia: query='cat adult  '
+    0.25  [cat-feeding] Cat feeding and water
+    0.16  [cat-grooming] Cat brushing
+    0.12  [cat-play] Play and enrichment for cats
+[3 GENERATE + VALIDATE] mode=offline, 6 suggestions kept
+  Bun: Spot-clean habitat and refresh water (10 min, high) conf=0.64 cites [other-habitat]
+      why: Small pets and exotics: Small pets need fresh water and food daily, spot cleaning of the habitat every day and a full clean weekly.
+  Mia: Feed cat and refresh water (5 min, high) conf=0.25 cites [cat-feeding]
+      why: Cat feeding and water: Adult cats do well on two measured meals daily, with wet food helping hydration.
+  Mia: Scoop litter box (5 min, high) conf=0.05 cites [cat-litter]
+      why: Litter box hygiene: Scoop the litter box at least once a day.
+  Mia: Interactive play session (15 min, medium) conf=0.12 cites [cat-play]
+      why: Play and enrichment for cats: Indoor cats need two or more play sessions of 10 to 15 minutes daily, ideally with a wand toy that mimics hunting.
+  Mia: Brush teeth (5 min, medium) conf=0.07 cites [dog-dental]
+      why: Dental care: Brushing a dog or cat's teeth several times a week prevents tartar and gum disease, which is linked to heart and kidney problems.
+  Mia: Brush cat (5 min, low) conf=0.16 cites [cat-grooming]
+      why: Cat brushing: Brushing a cat a few times a week reduces hairballs and shedding, and lets you spot lumps or skin problems early.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Spot-clean habitat and refresh water: fits today
+  Feed cat and refresh water: fits today
+  Scoop litter box: fits today | low confidence (0.05): weak match to the pet's profile
+  Interactive play session: DOES NOT FIT | does not fit in available minutes today
+  Brush teeth: DOES NOT FIT | low confidence (0.07): weak match to the pet's profile | does not fit in available minutes today
+  Brush cat: DOES NOT FIT | does not fit in available minutes today
+[5 OWNER APPROVES] (simulated click on Add) 3 of 6 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Mia  Feed cat and refresh water             5 min  [high]
+  [x] 08:30  Mia  Scoop litter box                       5 min  [high]
+  [x] --:--  Bun  Spot-clean habitat and refresh water  10 min  [high]
+  total 20 of 20 min
+
+==============================================================================
+RAG ABLATION: same cat (age 4), only the special-needs text changes
+==============================================================================
+  needs=''          -> (no medical/special-needs task)
+  needs='diabetes'  -> Give insulin with meal [high]
+  needs='anxiety'   -> Calm bonding time [high]

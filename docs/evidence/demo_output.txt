@@ -1,0 +1,89 @@
+PART 1: example inputs and outputs (offline generator)
+
+=== 1. Special need changes the advice ===
+INPUT  pet=Tom species=cat age=4 needs='diabetes' existing_tasks=[]
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=4
+  Tom  Give insulin with meal                  10m high   daily  07:00  conf=0.29 fits   [med-diabetes]
+  Tom  Feed cat and refresh water               5m high   daily  --:--  conf=0.11 fits   [cat-feeding]
+       note: 07:00 clashed with another task; time cleared
+  Tom  Interactive play session                15m medium daily  19:00  conf=0.05 fits   [cat-play]
+       note: low confidence (0.05): weak match to the pet's profile
+  Tom  Brush cat                                5m low    weekly --:--  conf=0.07 fits   [cat-grooming]
+       note: low confidence (0.07): weak match to the pet's profile
+
+=== 2. Age + existing task respected ===
+INPUT  pet=Rex species=dog age=10 needs='arthritis' existing_tasks=['Morning walk']
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=3
+  Rex  Give joint supplement                    5m high   daily  --:--  conf=0.32 fits   [med-arthritis]
+       note: 08:00 clashed with another task; time cleared
+  Rex  Feed breakfast                          10m high   daily  07:00  conf=0.09 fits   [dog-feeding]
+       note: low confidence (0.09): weak match to the pet's profile
+  Rex  Brush coat                              10m low    weekly --:--  conf=0.06 fits   [dog-grooming]
+       note: low confidence (0.06): weak match to the pet's profile
+
+=== 3. Overbooked day triggers warning ===
+INPUT  pet=Bun species=other age=2 needs='' existing_tasks=[]
+INPUT  pet=Mia species=cat age=3 needs='' existing_tasks=[]
+INPUT  available_minutes=15
+OUTPUT mode=offline suggestions=6
+  Bun  Spot-clean habitat and refresh water    10m high   daily  --:--  conf=0.64 NO FIT [other-habitat]
+       note: does not fit in available minutes today
+  Mia  Feed cat and refresh water               5m high   daily  07:00  conf=0.25 fits   [cat-feeding]
+  Mia  Scoop litter box                         5m high   daily  08:30  conf=0.05 fits   [cat-litter]
+       note: low confidence (0.05): weak match to the pet's profile
+  Mia  Interactive play session                15m medium daily  19:00  conf=0.12 NO FIT [cat-play]
+       note: does not fit in available minutes today
+  Mia  Brush teeth                              5m medium daily  --:--  conf=0.07 fits   [dog-dental]
+       note: low confidence (0.07): weak match to the pet's profile
+  Mia  Brush cat                                5m low    weekly --:--  conf=0.16 NO FIT [cat-grooming]
+       note: does not fit in available minutes today
+  WARNING: High-priority 'Spot-clean habitat and refresh water' for Bun won't fit today; consider increasing available minutes.
+
+=== 4. Negated need is not a condition ===
+INPUT  pet=Kit species=cat age=4 needs='no known allergies' existing_tasks=[]
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=5
+  Kit  Feed cat and refresh water               5m high   daily  07:00  conf=0.25 fits   [cat-feeding]
+  Kit  Scoop litter box                         5m high   daily  08:30  conf=0.05 fits   [cat-litter]
+       note: low confidence (0.05): weak match to the pet's profile
+  Kit  Interactive play session                15m medium daily  19:00  conf=0.12 fits   [cat-play]
+  Kit  Brush teeth                              5m medium daily  --:--  conf=0.07 fits   [dog-dental]
+       note: low confidence (0.07): weak match to the pet's profile
+  Kit  Brush cat                                5m low    weekly --:--  conf=0.16 fits   [cat-grooming]
+
+
+PART 2: guardrails against bad model output (fake LLM, log lines shown)
+
+--- a) hallucinated source id
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: cites unknown source 'made-up' | {'source_id': 'made-up', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- b) 999-minute task (prompt-injection style)
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: duration 999 out of range | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 999, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- c) invalid priority
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: invalid priority or frequency | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'urgent', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- d) malformed time '7am'
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: bad time '7am' | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '7am', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- e) not JSON at all
+  LOG WARNING pawpal.advisor: LLM failed for Mia (no JSON array in model output); using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- f) model call raises an error
+  LOG WARNING pawpal.advisor: LLM failed for Mia (network down); using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- g) one valid + one invalid
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: cites unknown source 'made-up' | {'source_id': 'made-up', 'title': 'Fake', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  RESULT mode=llm accepted=1 first=['Scoop litter'] warnings=0

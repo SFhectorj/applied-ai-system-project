@@ -136,3 +136,15 @@ def test_negated_special_needs_are_not_treated_as_conditions(kb, need):
 def test_affirmed_need_next_to_negated_one_is_kept(kb):
     r = CareAdvisor(kb, use_llm=False).advise(owner_with(Pet("P", "dog", 5, "arthritis, no allergies")))
     assert "med-arthritis" in ids(r) and "med-allergy" not in ids(r)
+
+
+def test_all_llm_suggestions_rejected_falls_back_to_offline(kb):
+    bad = [{"source_id": "made-up", "title": "x", "category": "y", "duration_minutes": 5,
+            "priority": "low", "frequency": "daily", "preferred_time": "", "rationale": ""}]
+    r = CareAdvisor(kb, llm=fake_llm_returning(bad)).advise(owner_with(Pet("Mia", "cat", 3)))
+    assert r.suggestions and r.warnings and r.mode == "offline"
+
+
+def test_llm_saying_nothing_applies_is_respected(kb):
+    r = CareAdvisor(kb, llm=fake_llm_returning([])).advise(owner_with(Pet("Mia", "cat", 3)))
+    assert r.suggestions == [] and r.mode == "llm"

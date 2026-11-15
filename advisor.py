@@ -249,9 +249,20 @@ class CareAdvisor:
             except Exception as exc:  # network, parse, refusal: degrade, don't crash
                 log.warning("LLM failed for %s (%s); using offline generator", pet.name, exc)
                 report.warnings.append(f"AI model unavailable for {pet.name}; used built-in guidance.")
+        found = self._validate_all(raws, pet, allowed, scores) if raws is not None else []
+        if raws is not None and raws and not found:  # model answered, but nothing survived
+            log.warning("all %d LLM suggestions for %s were rejected; using offline generator",
+                        len(raws), pet.name)
+            report.warnings.append(f"AI suggestions for {pet.name} failed validation; used built-in guidance.")
+            raws = None
         if raws is None:
-            raws = offline_generate(pet, passages)
             report.offline_pets.append(pet.name)
+            found = self._validate_all(offline_generate(pet, passages), pet, allowed, scores)
+        return found
+
+    @staticmethod
+    def _validate_all(raws: list, pet: Pet, allowed: dict, scores: dict) -> list[Suggestion]:
+        """Guardrail pass: keep valid, de-duplicated suggestions, best priority first."""
         found, seen = [], set()
         for raw in raws[:MAX_SUGGESTIONS_PER_PET * 2]:
             try:

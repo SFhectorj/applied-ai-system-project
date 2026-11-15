@@ -4,7 +4,7 @@
 
 **Intended use.** Reminding a pet owner about routine care they may have forgotten. **Not** for diagnosis, medication dosing or any veterinary decision.
 
-**Evidence base.** 61 unit tests pass and a 10-case eval passes in offline mode (`python eval_advisor.py`, results in `eval_results.json`). The live-Claude path has only been tested with a fake model; `eval_advisor.py --llm` has not been run. See the README's Testing summary.
+**Evidence base.** 63 unit tests pass and a 10-case eval passes in offline mode (`python eval_advisor.py`, results in `eval_results.json`). The live-Claude path has only been tested with a fake model; `eval_advisor.py --llm` has not been run. See the README's Testing summary.
 
 ---
 

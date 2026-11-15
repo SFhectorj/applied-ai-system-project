@@ -61,47 +61,316 @@ python eval_advisor.py             # reliability eval (add --llm to test Claude,
 
 To try the advisor in the UI: add a pet (put a condition such as `arthritis` or `diabetes` in *Special needs*), then click **Get care suggestions** and **Add** the ones you want.
 
-## Sample interactions
+## Sample interactions and execution evidence
 
-The first three are real output from the **offline** generator (reproducible with no key: `CareAdvisor(use_llm=False).advise(owner)`). With a key set, Claude writes the titles and rationales but is held to the same retrieved passages and the same validation.
+Everything below is **real captured output**, reproducible with no API key (offline generator, fake model for the guardrail cases). Raw files are in [`docs/evidence/`](docs/evidence/): `demo_output.txt`, `eval_output.txt`, `eval_results.json`, `pytest_output.txt`. Regenerate them with the commands shown (`end_to_end_output.txt` comes from `demo_end_to_end.py`).
 
-**1. Special needs change the advice.** Input: Tom, cat, age 4, special needs `diabetes`; owner has 120 min.
+### 1. End-to-end system run: `python demo_end_to_end.py` (3 inputs)
 
+Three different inputs go through every stage of the system: **input, retrieve (RAG), generate and validate, self-check, owner approval, final daily plan**. The last step is produced by the original PawPal+ `Scheduler`, so this is the whole application, not just the AI piece. Approval is simulated here by adding every suggestion that fits; in the app the owner clicks **Add**.
+
+What each part of the output demonstrates:
+
+| What to look for | Where | Example from the output below |
+|---|---|---|
+| **RAG: retrieval shapes the answer** | `[2 RETRIEVE]` ranks passages with scores, and `[3 GENERATE]` cites them | Case 1: `diabetes` retrieves `med-diabetes` (0.29) and the top suggestion is a high-priority insulin task citing it. The ablation at the bottom shows the *same cat* getting no medical task, an insulin task, or a calming task depending only on the special-needs text. |
+| **Species/age filtering** | `[2 RETRIEVE]` | Case 2: a 10-year-old dog retrieves `dog-senior`, never puppy or cat guidance. Case 3: the rabbit retrieves only `other-habitat`. |
+| **No duplicate advice** | `[3]` | Case 2: Rex already has a walk, so no second walk is suggested. |
+| **Agentic self-check** | `[4 SELF-CHECK]` | Cases 1 and 2: a clashing preferred time is cleared. Case 3: three suggestions are flagged `DOES NOT FIT` with a 20-minute budget. |
+| **Confidence and guardrails** | `conf=` and `low confidence` notes | Weak matches are labelled (e.g. 0.05); negated `no known allergies` retrieves no allergy passage (Case 3, Mia). |
+| **Human in the loop** | `[5 OWNER APPROVES]` | Case 3: only 3 of 6 suggestions are added because the other 3 don't fit. |
+| **Clear final output** | `[6 DAILY PLAN]` | Each case ends in a time-ordered schedule with totals (35/90, 45/60, 20/20 min). |
+
+```text
+$ python demo_end_to_end.py
+
+==============================================================================
+END-TO-END CASE 1: diabetic cat, relaxed day
+==============================================================================
+[1 INPUT]
+  pet=Tom (cat, age 4) needs='diabetes' existing=[]
+  owner has 90 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Tom: query='cat adult diabetes diabetes'
+    0.29  [med-diabetes] Diabetes and insulin
+    0.11  [cat-feeding] Cat feeding and water
+    0.07  [cat-grooming] Cat brushing
+[3 GENERATE + VALIDATE] mode=offline, 4 suggestions kept
+  Tom: Give insulin with meal (10 min, high) conf=0.29 cites [med-diabetes]
+      why: Tom's special needs (diabetes) match: Diabetes and insulin.
+  Tom: Feed cat and refresh water (5 min, high) conf=0.11 cites [cat-feeding]
+      why: Cat feeding and water: Adult cats do well on two measured meals daily, with wet food helping hydration.
+  Tom: Interactive play session (15 min, medium) conf=0.05 cites [cat-play]
+      why: Play and enrichment for cats: Indoor cats need two or more play sessions of 10 to 15 minutes daily, ideally with a wand toy that mimics hunting.
+  Tom: Brush cat (5 min, low) conf=0.07 cites [cat-grooming]
+      why: Cat brushing: Brushing a cat a few times a week reduces hairballs and shedding, and lets you spot lumps or skin problems early.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Give insulin with meal: fits today
+  Feed cat and refresh water: fits today | 07:00 clashed with another task; time cleared
+  Interactive play session: fits today | low confidence (0.05): weak match to the pet's profile
+  Brush cat: fits today | low confidence (0.07): weak match to the pet's profile
+[5 OWNER APPROVES] (simulated click on Add) 4 of 4 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Tom  Give insulin with meal                10 min  [high]
+  [x] 19:00  Tom  Interactive play session              15 min  [medium]
+  [x] --:--  Tom  Feed cat and refresh water             5 min  [high]
+  [x] --:--  Tom  Brush cat                              5 min  [low]
+  total 35 of 90 min
+
+==============================================================================
+END-TO-END CASE 2: senior arthritic dog who already has a walk
+==============================================================================
+[1 INPUT]
+  pet=Rex (dog, age 10) needs='arthritis' existing=['Morning walk']
+  owner has 60 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Rex: query='dog senior old aging arthritis arthritis'
+    0.38  [dog-senior] Senior dog joint care
+    0.32  [med-arthritis] Arthritis and mobility
+    0.09  [dog-feeding] Dog feeding schedule
+[3 GENERATE + VALIDATE] mode=offline, 3 suggestions kept
+  Rex: Give joint supplement (5 min, high) conf=0.32 cites [med-arthritis]
+      why: Rex's special needs (arthritis) match: Arthritis and mobility.
+  Rex: Feed breakfast (10 min, high) conf=0.09 cites [dog-feeding]
+      why: Dog feeding schedule: Adult dogs do best with two measured meals a day, about 12 hours apart.
+  Rex: Brush coat (10 min, low) conf=0.06 cites [dog-grooming]
+      why: Coat and nail care: Brush dogs weekly (daily for long coats) and trim nails every 3 to 4 weeks.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Give joint supplement: fits today | 08:00 clashed with another task; time cleared
+  Feed breakfast: fits today | low confidence (0.09): weak match to the pet's profile
+  Brush coat: fits today | low confidence (0.06): weak match to the pet's profile
+[5 OWNER APPROVES] (simulated click on Add) 3 of 3 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Rex  Feed breakfast                        10 min  [high]
+  [x] 08:00  Rex  Morning walk                          20 min  [high]
+  [x] --:--  Rex  Give joint supplement                  5 min  [high]
+  [x] --:--  Rex  Brush coat                            10 min  [low]
+  total 45 of 60 min
+
+==============================================================================
+END-TO-END CASE 3: two pets, only 20 minutes, negated condition
+==============================================================================
+[1 INPUT]
+  pet=Bun (other, age 2) needs='' existing=[]
+  pet=Mia (cat, age 3) needs='no known allergies' existing=[]
+  owner has 20 min today
+[2 RETRIEVE] knowledge-base passages ranked for each pet (species/age filtered)
+  Bun: query='other small pet habitat cage water clean adult  '
+    0.64  [other-habitat] Small pets and exotics
+  Mia: query='cat adult  '
+    0.25  [cat-feeding] Cat feeding and water
+    0.16  [cat-grooming] Cat brushing
+    0.12  [cat-play] Play and enrichment for cats
+[3 GENERATE + VALIDATE] mode=offline, 6 suggestions kept
+  Bun: Spot-clean habitat and refresh water (10 min, high) conf=0.64 cites [other-habitat]
+      why: Small pets and exotics: Small pets need fresh water and food daily, spot cleaning of the habitat every day and a full clean weekly.
+  Mia: Feed cat and refresh water (5 min, high) conf=0.25 cites [cat-feeding]
+      why: Cat feeding and water: Adult cats do well on two measured meals daily, with wet food helping hydration.
+  Mia: Scoop litter box (5 min, high) conf=0.05 cites [cat-litter]
+      why: Litter box hygiene: Scoop the litter box at least once a day.
+  Mia: Interactive play session (15 min, medium) conf=0.12 cites [cat-play]
+      why: Play and enrichment for cats: Indoor cats need two or more play sessions of 10 to 15 minutes daily, ideally with a wand toy that mimics hunting.
+  Mia: Brush teeth (5 min, medium) conf=0.07 cites [dog-dental]
+      why: Dental care: Brushing a dog or cat's teeth several times a week prevents tartar and gum disease, which is linked to heart and kidney problems.
+  Mia: Brush cat (5 min, low) conf=0.16 cites [cat-grooming]
+      why: Cat brushing: Brushing a cat a few times a week reduces hairballs and shedding, and lets you spot lumps or skin problems early.
+[4 SELF-CHECK] simulated against the real Scheduler
+  Spot-clean habitat and refresh water: fits today
+  Feed cat and refresh water: fits today
+  Scoop litter box: fits today | low confidence (0.05): weak match to the pet's profile
+  Interactive play session: DOES NOT FIT | does not fit in available minutes today
+  Brush teeth: DOES NOT FIT | low confidence (0.07): weak match to the pet's profile | does not fit in available minutes today
+  Brush cat: DOES NOT FIT | does not fit in available minutes today
+[5 OWNER APPROVES] (simulated click on Add) 3 of 6 added as tasks
+[6 DAILY PLAN] produced by the original PawPal+ Scheduler
+  [x] 07:00  Mia  Feed cat and refresh water             5 min  [high]
+  [x] 08:30  Mia  Scoop litter box                       5 min  [high]
+  [x] --:--  Bun  Spot-clean habitat and refresh water  10 min  [high]
+  total 20 of 20 min
+
+==============================================================================
+RAG ABLATION: same cat (age 4), only the special-needs text changes
+==============================================================================
+  needs=''          -> (no medical/special-needs task)
+  needs='diabetes'  -> Give insulin with meal [high]
+  needs='anxiety'   -> Calm bonding time [high]
 ```
-Tom: Give insulin with meal   10 min  HIGH  daily 07:00  fits today   [source: med-diabetes]
-   Tom's special needs (diabetes) match: Diabetes and insulin.
-Tom: Feed cat and refresh water  5 min HIGH  daily       fits today   [source: cat-feeding]
-   note: 07:00 clashed with another task; time cleared
-Tom: Interactive play session 15 min MEDIUM daily 19:00  fits today   [source: cat-play]
-Tom: Brush cat                 5 min  LOW   weekly       fits today   [source: cat-grooming]
+
+Note two behaviors visible above that are known limitations (see `model_card.md`): in Case 1 the insulin task takes the 07:00 slot, so the feeding task loses its time even though insulin is meant to be given with a meal; and in Case 3 the dental passage written for dogs and cats is shared with the cat.
+
+### 2. Advisor in isolation: `python demo_advisor.py`
+
+Each block shows the **example input** (pet profile, existing tasks, minutes available) and the **resulting output** (suggestions with priority, confidence, whether they fit, and the cited source passage). Cases 1 to 4 show: a special need changing the advice, age and existing tasks being respected, an overbooked day producing a warning, and a negated condition (`no known allergies`) not being treated as an allergy.
+
+```text
+$ python demo_advisor.py
+PART 1: example inputs and outputs (offline generator)
+
+=== 1. Special need changes the advice ===
+INPUT  pet=Tom species=cat age=4 needs='diabetes' existing_tasks=[]
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=4
+  Tom  Give insulin with meal                  10m high   daily  07:00  conf=0.29 fits   [med-diabetes]
+  Tom  Feed cat and refresh water               5m high   daily  --:--  conf=0.11 fits   [cat-feeding]
+       note: 07:00 clashed with another task; time cleared
+  Tom  Interactive play session                15m medium daily  19:00  conf=0.05 fits   [cat-play]
+       note: low confidence (0.05): weak match to the pet's profile
+  Tom  Brush cat                                5m low    weekly --:--  conf=0.07 fits   [cat-grooming]
+       note: low confidence (0.07): weak match to the pet's profile
+
+=== 2. Age + existing task respected ===
+INPUT  pet=Rex species=dog age=10 needs='arthritis' existing_tasks=['Morning walk']
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=3
+  Rex  Give joint supplement                    5m high   daily  --:--  conf=0.32 fits   [med-arthritis]
+       note: 08:00 clashed with another task; time cleared
+  Rex  Feed breakfast                          10m high   daily  07:00  conf=0.09 fits   [dog-feeding]
+       note: low confidence (0.09): weak match to the pet's profile
+  Rex  Brush coat                              10m low    weekly --:--  conf=0.06 fits   [dog-grooming]
+       note: low confidence (0.06): weak match to the pet's profile
+
+=== 3. Overbooked day triggers warning ===
+INPUT  pet=Bun species=other age=2 needs='' existing_tasks=[]
+INPUT  pet=Mia species=cat age=3 needs='' existing_tasks=[]
+INPUT  available_minutes=15
+OUTPUT mode=offline suggestions=6
+  Bun  Spot-clean habitat and refresh water    10m high   daily  --:--  conf=0.64 NO FIT [other-habitat]
+       note: does not fit in available minutes today
+  Mia  Feed cat and refresh water               5m high   daily  07:00  conf=0.25 fits   [cat-feeding]
+  Mia  Scoop litter box                         5m high   daily  08:30  conf=0.05 fits   [cat-litter]
+       note: low confidence (0.05): weak match to the pet's profile
+  Mia  Interactive play session                15m medium daily  19:00  conf=0.12 NO FIT [cat-play]
+       note: does not fit in available minutes today
+  Mia  Brush teeth                              5m medium daily  --:--  conf=0.07 fits   [dog-dental]
+       note: low confidence (0.07): weak match to the pet's profile
+  Mia  Brush cat                                5m low    weekly --:--  conf=0.16 NO FIT [cat-grooming]
+       note: does not fit in available minutes today
+  WARNING: High-priority 'Spot-clean habitat and refresh water' for Bun won't fit today; consider increasing available minutes.
+
+=== 4. Negated need is not a condition ===
+INPUT  pet=Kit species=cat age=4 needs='no known allergies' existing_tasks=[]
+INPUT  available_minutes=120
+OUTPUT mode=offline suggestions=5
+  Kit  Feed cat and refresh water               5m high   daily  07:00  conf=0.25 fits   [cat-feeding]
+  Kit  Scoop litter box                         5m high   daily  08:30  conf=0.05 fits   [cat-litter]
+       note: low confidence (0.05): weak match to the pet's profile
+  Kit  Interactive play session                15m medium daily  19:00  conf=0.12 fits   [cat-play]
+  Kit  Brush teeth                              5m medium daily  --:--  conf=0.07 fits   [dog-dental]
+       note: low confidence (0.07): weak match to the pet's profile
+  Kit  Brush cat                                5m low    weekly --:--  conf=0.16 fits   [cat-grooming]
 ```
 
-The same cat without the `diabetes` note gets no insulin task. The self-check moved the feeding time off 07:00 because the insulin task already holds that slot.
+### 3. Guardrail and reliability results (`demo_advisor.py`, Part 2)
 
-**2. Age and existing tasks are respected.** Input: Rex, dog, age 10, special needs `arthritis`, already has "Morning walk" (08:00).
+The advisor is fed deliberately bad model output. Each case shows the log line the guardrail wrote and the final result: invalid items are dropped, and if the model fails or nothing it returned survives validation, the advisor falls back to offline guidance with a warning instead of crashing or returning nothing.
 
+```text
+PART 2: guardrails against bad model output (fake LLM, log lines shown)
+
+--- a) hallucinated source id
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: cites unknown source 'made-up' | {'source_id': 'made-up', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- b) 999-minute task (prompt-injection style)
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: duration 999 out of range | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 999, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- c) invalid priority
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: invalid priority or frequency | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'urgent', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- d) malformed time '7am'
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: bad time '7am' | {'source_id': 'cat-litter', 'title': 'Scoop litter', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '7am', 'rationale': 'x'}
+  LOG WARNING pawpal.advisor: all 1 LLM suggestions for Mia were rejected; using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- e) not JSON at all
+  LOG WARNING pawpal.advisor: LLM failed for Mia (no JSON array in model output); using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- f) model call raises an error
+  LOG WARNING pawpal.advisor: LLM failed for Mia (network down); using offline generator
+  RESULT mode=offline accepted=5 first=['Feed cat and refresh water', 'Scoop litter box'] warnings=1
+
+--- g) one valid + one invalid
+  LOG WARNING pawpal.advisor: rejected suggestion for Mia: cites unknown source 'made-up' | {'source_id': 'made-up', 'title': 'Fake', 'category': 'hygiene', 'duration_minutes': 5, 'priority': 'high', 'frequency': 'daily', 'preferred_time': '', 'rationale': 'x'}
+  RESULT mode=llm accepted=1 first=['Scoop litter'] warnings=0
 ```
-Rex: Give joint supplement  5 min HIGH  daily          fits today   [source: med-arthritis]
-   note: 08:00 clashed with another task; time cleared
-Rex: Feed breakfast        10 min HIGH  daily 07:00    fits today   [source: dog-feeding]
-Rex: Brush coat            10 min LOW   weekly         fits today   [source: dog-grooming]
+
+| Bad model output | Guardrail response | Result |
+|---|---|---|
+| Hallucinated source id | Rejected (`cites unknown source`), then offline fallback | Pass |
+| 999-minute task | Rejected (`duration out of range`), then offline fallback | Pass |
+| Invalid priority | Rejected, then offline fallback | Pass |
+| Malformed time `7am` | Rejected (`bad time`), then offline fallback | Pass |
+| Not JSON | Offline fallback + warning | Pass |
+| Model call raises | Offline fallback + warning | Pass |
+| One valid, one invalid | Keeps the valid one, logs the rejection | Pass |
+
+### 4. Sample command: `python eval_advisor.py`
+
+```text
+$ python eval_advisor.py
+[PASS] diabetic cat gets insulin, high priority | cited=['cat-feeding', 'cat-grooming', 'cat-play', 'med-diabetes'] | consistent=True
+[PASS] senior arthritic dog gets joint care | cited=['dog-feeding', 'dog-grooming', 'dog-senior', 'med-arthritis'] | consistent=True
+[PASS] puppy gets puppy guidance, not adult exercise | cited=['dog-grooming', 'dog-puppy'] | consistent=True
+[PASS] adult indoor cat gets litter + play | cited=['cat-feeding', 'cat-grooming', 'cat-litter', 'cat-play', 'dog-dental'] | consistent=True
+[PASS] rabbit gets small-pet habitat care | cited=['other-habitat'] | consistent=True
+[PASS] anxious dog gets calming routine | cited=['dog-exercise', 'dog-feeding', 'dog-grooming', 'med-anxiety'] | consistent=True
+
+| Test input | Criteria | Result |
+|---|---|---|
+| diabetic cat gets insulin, high priority | right passages cited, wrong ones excluded | Pass |
+| senior arthritic dog gets joint care | right passages cited, wrong ones excluded | Pass |
+| puppy gets puppy guidance, not adult exercise | right passages cited, wrong ones excluded | Pass |
+| adult indoor cat gets litter + play | right passages cited, wrong ones excluded | Pass |
+| rabbit gets small-pet habitat care | right passages cited, wrong ones excluded | Pass |
+| anxious dog gets calming routine | right passages cited, wrong ones excluded | Pass |
+| Owner with no pets | returns no suggestions, no crash | Pass |
+| Nonsense special needs | still gives normal adult-dog guidance, nothing invented | Pass |
+| Prompt-injection text in special needs | all suggestions stay valid (1-240 min, cited) | Pass |
+| Zero available minutes | warns instead of silently dropping high-priority tasks | Pass |
+
+mean confidence across scenarios: 0.25
+
+10/10 scenarios passed (mode=offline, runs each=1)
 ```
 
-No second walk was suggested because the dog already has one, and no puppy or cat guidance was retrieved.
+Structured results: [`docs/evidence/eval_results.json`](docs/evidence/eval_results.json). With a key, `python eval_advisor.py --llm` runs each scenario 3 times against Claude to measure consistency (not yet run, see Testing summary).
 
-**3. The self-check warns when the day is too full.** Input: owner has only 15 minutes; Bun (rabbit, `other`, age 2) and Mia (cat, age 3).
+### 5. Sample command: `python -m pytest -v`
 
-```
-WARNING: High-priority 'Spot-clean habitat and refresh water' for Bun won't fit today;
-         consider increasing available minutes.
-Bun: Spot-clean habitat and refresh water  10 min HIGH    won't fit today
-Mia: Feed cat and refresh water             5 min HIGH    fits today
-Mia: Scoop litter box                       5 min HIGH    fits today
-Mia: Interactive play session              15 min MEDIUM  won't fit today
+```text
+$ python -m pytest -v
+============================= test session starts ==============================
+platform darwin -- Python 3.13.2, pytest-9.1.1, pluggy-1.6.0 -- /Library/Frameworks/Python.framework/Versions/3.13/bin/python3
+cachedir: .pytest_cache
+rootdir: .
+plugins: anyio-4.14.1
+collecting ... collected 63 items
 ...
+tests/test_pawpal.py::test_duplicate_task_id_across_pets_is_allowed_known_limitation PASSED [ 98%]
+tests/test_pawpal.py::test_edit_and_remove_missing_task PASSED           [100%]
+
+============================== 63 passed in 0.03s ==============================
 ```
 
-**4. Failure handling.** If the model call errors, refuses, or returns invalid JSON, the advisor logs the problem, shows "AI model unavailable for Mia; used built-in guidance", and returns offline suggestions instead of crashing (covered by `test_llm_failure_falls_back_to_offline` and `test_garbage_llm_output_falls_back`).
+Full verbose output: [`docs/evidence/pytest_output.txt`](docs/evidence/pytest_output.txt).
+
+### 6. Sample command: the app
+
+```bash
+streamlit run app.py
+```
+
+Example input: add a pet "Rex" (dog, age 10, special needs `arthritis`), click **Get care suggestions**. Example output: a "Give joint supplement" task (high priority, cited source `med-arthritis`, confidence shown) with an **Add** button; clicking it adds a real task that appears in the task table and the generated schedule. This flow is exercised headlessly with Streamlit's `AppTest` during development.
+
+### 7. What gets logged (`pawpal.log`)
+
+Retrieval scores (debug), LLM request ids and token counts, each rejected suggestion with its reason, and every fallback to offline mode. Warnings (rejections, fallbacks) also print to the console, as seen in the Part 2 output above.
 
 ## Design decisions and trade-offs
 
@@ -115,11 +384,11 @@ Mia: Interactive play session              15 min MEDIUM  won't fit today
 
 ## Testing summary
 
-**Headline: 61/61 unit tests pass and 10/10 eval scenarios pass (offline mode). The eval's first run was 5/6: a rabbit got no advice at all, which led to a fix and a regression test. The live-Claude eval has not been run yet.** Mean retrieval confidence was 0.25 across the 6 pet scenarios.
+**Headline: 63/63 unit tests pass and 10/10 eval scenarios pass (offline mode). The eval's first run was 5/6: a rabbit got no advice at all, which led to a fix and a regression test. The live-Claude eval has not been run yet.** Mean retrieval confidence was 0.25 across the 6 pet scenarios.
 
 Four reliability mechanisms are in place:
 
-1. **Automated tests** (`python -m pytest`): 44 original scheduler tests plus 17 in `tests/test_advisor.py` (species/age filtering, negated special needs, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM returning valid, hallucinated, garbage and failing output, time-clash repair, overflow flagging, confidence bounds, empty owner).
+1. **Automated tests** (`python -m pytest`): 44 original scheduler tests plus 19 in `tests/test_advisor.py` (species/age filtering, negated special needs, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM returning valid, hallucinated, garbage and failing output, time-clash repair, overflow flagging, confidence bounds, empty owner).
 2. **Scenario eval** (`python eval_advisor.py`): runs the advisor end to end and writes `eval_results.json`. With `--llm` each scenario runs 3 times to measure consistency.
 3. **Confidence scoring**: each suggestion carries `confidence`, the TF-IDF cosine similarity between the pet's profile and the passage it cites (0-1). Suggestions below 0.10 are labelled "low confidence" in the UI. The score is a relative signal, not a calibrated probability: special-needs matches score highest (insulin for the diabetic cat: 0.29) and generic ones lowest (cat play: 0.05).
 4. **Logging and error handling** (`pawpal.log`): retrieval scores, LLM request ids and token counts, every rejected suggestion with the reason, and every fallback to offline mode. Model errors, refusals and malformed JSON degrade to offline suggestions with a warning instead of crashing.
@@ -162,9 +431,11 @@ rag.py                 Knowledge-base loader and TF-IDF retriever
 knowledge/pet_care.json  Care guidance passages
 pawpal_system.py       Original PawPal+ scheduling engine
 main.py                Terminal demo of the scheduler
+demo_end_to_end.py     End-to-end run: input -> retrieve -> generate -> check -> approve -> plan
+demo_advisor.py        Advisor demo: example inputs/outputs + guardrail cases
 eval_advisor.py        Scenario-based reliability eval
 logging_setup.py       Logging configuration
 tests/                 pytest suites (scheduler + advisor)
 diagrams/              system.mmd (this system), uml.mmd (original classes)
-docs/                  Original PawPal+ documentation
+docs/                  Original PawPal+ docs; docs/evidence/ = captured run output
 ```
