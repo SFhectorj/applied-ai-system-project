@@ -1,303 +1,152 @@
-# PawPal+ (Module 2 Project)
+# 🐾 PawPal+ with an AI Care Advisor
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+A pet-care planner that builds a daily schedule across multiple pets **and** uses retrieval-augmented AI to tell owners what care each pet is actually missing.
 
-## Scenario
+## Original project: PawPal+ (Modules 1-3)
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+This project extends **PawPal+**, the pet-care scheduler I built in Modules 1-3. PawPal+ let a busy owner track care tasks (walks, feeding, meds, grooming) for several pets, then generated a priority-based daily plan that fit the owner's available minutes and explained why each task was scheduled or skipped. Its logic layer (`Owner`, `Pet`, `Task`, `Scheduler`, `DailyPlan`) also handled sorting, filtering, recurring tasks and conflict warnings, all behind a Streamlit UI and covered by 44 tests. Full documentation of that original system is kept in [`docs/scheduler_details.md`](docs/scheduler_details.md).
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+## Summary: what this adds and why it matters
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+The original app scheduled whatever tasks the owner remembered to enter. It could not notice that a diabetic cat has no insulin task, or that a 10-year-old arthritic dog needs joint care. The **AI Care Advisor** closes that gap:
 
-## What you will build
+1. It **retrieves** care guidance matching each pet's species, age and special needs.
+2. It **generates** task suggestions grounded in that guidance (with Claude, or an offline fallback).
+3. It **validates** and **self-checks** them against the owner's real schedule and time budget.
+4. The owner **approves** each suggestion before it becomes a task.
 
-Your final app should:
+Retrieval isn't decoration: different pets retrieve different passages and get different tasks, priorities and rationales. The advisor never adds anything on its own, and it keeps working with no API key or when the model fails.
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+## Architecture overview
 
-## Implementation summary
-
-The logic layer lives in `pawpal_system.py`. `main.py` is a terminal demo that builds an owner with two pets and prints today's schedule. The Streamlit UI in `app.py` uses the same classes, so the app and the terminal demo share one scheduling engine.
-
-### How the classes work together
+Source: [`diagrams/system.mmd`](diagrams/system.mmd) (Mermaid).
 
 ```
-Owner ──has many──▶ Pet ──has many──▶ Task
-  ▲
-  └── Scheduler ──produces──▶ DailyPlan
+pet profile -> Retriever -> Generator (Claude | offline) -> Guardrails -> Self-check -> Suggestions -> Human approves -> Scheduler -> Daily plan
+                  ^                                                                        |
+            knowledge base                                          pytest + eval_advisor.py + pawpal.log watch every stage
 ```
 
-- **`Task`**: one care activity (title, category, duration, priority, preferred time, frequency, completion status). It validates priority (`high`/`medium`/`low`) and frequency (`once`/`daily`/`weekly`), and can be marked complete or updated.
-- **`Pet`**: pet details plus its own list of tasks. It adds (rejecting duplicate ids), removes and edits tasks, and reports which are still pending.
-- **`Owner`**: holds the pets, the minutes available per day, and preferences. `get_all_tasks()` returns every pet's tasks in one list.
-- **`Scheduler`**: the "brain". It reads from `owner.get_all_tasks()` rather than from a single pet, so scheduling covers every pet. It drops completed tasks, sorts the rest (priority first, then preferred time, then shortest), and fills the owner's available minutes in that order.
-- **`DailyPlan`**: the result. It holds the scheduled tasks, the skipped tasks (those that didn't fit), and a reason for each, with helpers for total minutes and a text summary.
+| Component | File | Role |
+|-----------|------|------|
+| Retriever | `rag.py` | Loads `knowledge/pet_care.json` (16 passages), filters by species and age, ranks with TF-IDF cosine similarity. |
+| Generator | `advisor.py` | Claude returns JSON suggestions that must cite a retrieved passage; an offline generator builds them from the same passages when there is no key or the call fails. |
+| Guardrails | `advisor.py: validate()` | Rejects suggestions that cite unretrieved sources, have invalid values, or duplicate existing tasks. |
+| Self-check (agentic step) | `advisor.py: _check()` | Simulates the plan on a copy of the owner's data, clears preferred times that clash, flags suggestions that won't fit. |
+| Scheduling engine | `pawpal_system.py` | The original PawPal+ logic. Approved suggestions become ordinary `Task`s here. |
+| UI | `app.py` | Streamlit app with the "AI Care Advisor" section and an **Add** button per suggestion (the human checkpoint). |
+| Testing | `tests/`, `eval_advisor.py` | 55 unit tests plus a scenario eval that measures retrieval correctness and consistency. |
+| Logging | `logging_setup.py` | `pawpal.log` records retrieval scores, LLM request ids and token counts, and rejected suggestions. |
 
-### Flow
+## Setup instructions
 
-1. Create an `Owner` and add `Pet`s, then add `Task`s to each pet.
-2. `Scheduler(owner).generate_plan()` gathers all pending tasks across pets, sorts them and greedily schedules what fits.
-3. Anything that doesn't fit goes to `skipped_tasks` with an explanation, available through `explain_plan()` or `get_summary()`.
-
-### Known limitation
-
-Task ids are only unique within a pet. `DailyPlan.explanations` is keyed by task id, so two pets with the same task id would overwrite each other's explanations.
-
-## ✨ Features
-
-- **Multi-pet task tracking:** one owner, any number of pets, each with its own tasks (title, category, duration, priority, preferred time, frequency).
-- **Priority-based daily plan:** `generate_plan()` sorts pending tasks by priority (high → low), then preferred time, then shortest duration, and greedily fills the owner's available minutes.
-- **Skipped-task explanations:** tasks that don't fit are listed with a reason (e.g. "needs 15 min but only 10 left"). Every scheduled task also gets a reason.
-- **Sorting by time:** `sort_by_time()` orders tasks chronologically by `HH:MM`, with untimed tasks last. The original list is not modified.
-- **Filtering:** `filter_tasks()` narrows tasks by completion status and/or pet name (case-insensitive); both filters combine with AND.
-- **Conflict warnings:** `find_conflicts()` flags pending tasks that share a date and exact start time, both within one pet and across pets. It returns warnings and never blocks plan generation.
-- **Daily and weekly recurrence:** completing a recurring task with `complete_task()` creates the next occurrence (+1 day or +7 days from its due date). One-off tasks don't recur.
-- **Due-date awareness:** tasks due in the future are left out of today's plan; overdue tasks are still scheduled.
-- **Input validation:** invalid priority/frequency, duplicate task ids within a pet, and negative availability raise clear errors.
-- **Streamlit UI:** add pets and tasks, filter and sort the task table, see conflict warnings, mark tasks done, and generate the schedule.
-
-
-## 🤖 AI Care Advisor (RAG + self-check)
-
-The advisor adds retrieval-augmented AI to the scheduler. It is wired into the Streamlit app ("AI Care Advisor" section) and its suggestions become real `Task`s that flow through the same `Scheduler`.
-
-```
-pet profile ──▶ RETRIEVE (rag.py) ──▶ GENERATE (Claude or offline) ──▶ VALIDATE ──▶ CHECK (Scheduler sim) ──▶ suggestions
-```
-
-1. **Retrieve** (`rag.py`): `knowledge/pet_care.json` holds care guidance. Passages are filtered by species and age, then ranked by TF-IDF cosine similarity against a query built from the pet (species, life stage, special needs). Topics a pet already has tasks for are dropped.
-2. **Generate** (`advisor.py`): the retrieved passages are the *only* source the model may use. With `ANTHROPIC_API_KEY` set, Claude (`claude-opus-5-5`, override with `PAWPAL_MODEL`) returns JSON suggestions that must cite a passage id. Without a key, a deterministic offline generator builds suggestions from the same passages. Different pets and special needs retrieve different passages, so the output genuinely changes (a diabetic cat gets a high-priority insulin task; a healthy one does not).
-3. **Validate (guardrails)**: each suggestion must cite a retrieved passage, have valid priority/frequency/duration/`HH:MM`, and not duplicate an existing task. Invalid ones are dropped and logged. If the model call fails, returns garbage or refuses, the advisor falls back to offline mode with a warning instead of crashing.
-4. **Check (agentic step)**: the advisor simulates the plan on a copy of the owner's data, clears preferred times that clash with existing tasks, and flags suggestions (especially high-priority ones) that don't fit the available minutes.
-
-Logging goes to `pawpal.log` (retrieval scores, LLM request ids and token counts, rejected suggestions); warnings also print to the console.
-
-System diagram (Mermaid source): [`diagrams/system.mmd`](diagrams/system.mmd). Humans check AI output at the *Add* button (nothing is added to the schedule without approval); automated checks are the guardrails, the self-check step, `pytest` and `eval_advisor.py`.
-
-### Reliability testing
+Requires Python 3.10+.
 
 ```bash
-python eval_advisor.py          # 6 scenarios, deterministic, no key needed
-python eval_advisor.py --llm    # same scenarios against Claude, 3 runs each, reports consistency
-pytest                          # includes tests/test_advisor.py (fake LLM, guardrails, fallback)
-```
-
-The eval checks that the right guidance is cited, wrong-species/age guidance is not, and special-needs tasks are high priority. It already caught one bug (pets of species "other" retrieved nothing). The script exits non-zero on failure.
-
-### Setup and run
-
-```bash
+git clone <this repo> && cd applied-ai-system-final
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=...     # optional; omit to use built-in guidance
-streamlit run app.py
+
+# Optional: use Claude for generation. Without it the advisor runs in offline mode.
+export ANTHROPIC_API_KEY=your-key
+# Optional: choose a different model (default claude-opus-5-5)
+export PAWPAL_MODEL=claude-sonnet-5-5
+
+streamlit run app.py               # web UI
+python main.py                     # terminal demo of the original scheduler
+python -m pytest                   # unit tests
+python eval_advisor.py             # reliability eval (add --llm to test Claude, needs a key)
 ```
 
-## Getting started
+To try the advisor in the UI: add a pet (put a condition such as `arthritis` or `diabetes` in *Special needs*), then click **Get care suggestions** and **Add** the ones you want.
 
-### Setup
+## Sample interactions
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+The first three are real output from the **offline** generator (reproducible with no key: `CareAdvisor(use_llm=False).advise(owner)`). With a key set, Claude writes the titles and rationales but is held to the same retrieved passages and the same validation.
 
-### Suggested workflow
-
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
-
-## 🧪 Testing PawPal+
-
-```bash
-python -m pytest
-```
-
-The suite (`tests/test_pawpal.py`, 44 tests) covers:
-
-- **Sorting:** chronological order, untimed tasks last, stable ties, empty input, input not mutated.
-- **Recurrence:** daily (+1 day) and weekly (+7 days) follow-ups, one-off tasks, year-end and leap-year rollover, unique ids across pets, unknown ids.
-- **Conflict detection:** same-time clashes within one pet and across pets, three-way clashes, and ignored cases (completed, untimed, different dates).
-- **Plan generation:** priority order, exact-fit boundary, skipped tasks with reasons, never exceeding available time, overdue and future tasks.
-- **Edge cases and validation:** pets with no tasks, owners with no pets, zero availability, invalid priority/frequency, duplicate ids.
-- **Known limitations (documented as tests):** unpadded times sort as strings, overlapping durations with different start times are not flagged, completing a recurring task twice creates two follow-ups, a failed `Task.update` leaves the bad value in place, and task ids may repeat across pets.
-
-Sample test output:
+**1. Special needs change the advice.** Input: Tom, cat, age 4, special needs `diabetes`; owner has 120 min.
 
 ```
-============================= test session starts ==============================
-platform darwin -- Python 3.13.2, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/beck/Developer/ai110-module2show-pawpal-starter
-plugins: anyio-4.14.1
-collected 44 items
-
-tests/test_pawpal.py ............................................        [100%]
-
-============================== 44 passed in 0.02s ==============================
+Tom: Give insulin with meal   10 min  HIGH  daily 07:00  fits today   [source: med-diabetes]
+   Tom's special needs (diabetes) match: Diabetes and insulin.
+Tom: Feed cat and refresh water  5 min HIGH  daily       fits today   [source: cat-feeding]
+   note: 07:00 clashed with another task; time cleared
+Tom: Interactive play session 15 min MEDIUM daily 19:00  fits today   [source: cat-play]
+Tom: Brush cat                 5 min  LOW   weekly       fits today   [source: cat-grooming]
 ```
 
-**Confidence Level: ★★★★☆ (4/5)** — All 44 tests pass, and the core behaviors (sorting, recurrence, conflict detection, planning) are verified including edge cases. One star is held back because five known limitations are documented rather than fixed.
+The same cat without the `diabetes` note gets no insulin task. The self-check moved the feeding time off 07:00 because the insulin task already holds that slot.
 
-## 📐 Smarter Scheduling
-
-All of these live on `Scheduler` in `pawpal_system.py` (except where noted) and are exercised in `main.py` and `tests/test_pawpal.py`.
-
-| Feature | Method(s) | Notes |
-|---------|-----------|-------|
-| Plan ordering | `Scheduler.sort_tasks()` | Priority first, then preferred time, then shortest duration |
-| Sorting by time | `Scheduler.sort_by_time()` | Chronological; tasks with no time go last |
-| Filtering | `Scheduler.filter_tasks()` | By completion status and/or pet name |
-| Conflict detection | `Scheduler.find_conflicts()` | Warns when pending tasks share a day and exact start time |
-| Recurring tasks | `Task.next_occurrence()`, `Scheduler.complete_task()` | Completing a daily/weekly task creates the next one |
-
-### Sorting
-
-- `sort_by_time(tasks)` returns a new list ordered by `preferred_time`. It uses `sorted()` with a lambda key that returns a tuple, `(preferred_time == "", preferred_time)`. Tuples compare element by element and `False < True`, so untimed tasks sort after every timed one.
-- `"HH:MM"` strings compare correctly as text only when they are zero-padded (`"07:30"`, not `"7:30"`).
-- `sort_tasks()` is a separate ordering used by `generate_plan()` to decide what gets scheduled first when time is limited.
-
-### Filtering
-
-`filter_tasks(completed=None, pet_name=None)` returns matching tasks across all of the owner's pets.
-
-- `completed=True` returns finished tasks and `completed=False` returns unfinished ones.
-- `pet_name` matches case-insensitively, so `"rex"` finds Rex.
-- A filter left as `None` is not applied. Both filters combine with AND, and with neither set every task is returned.
-- The result is not sorted, so wrap it in `sort_by_time()` if you want it ordered.
-
-### Conflict detection
-
-`find_conflicts()` returns a list of warning strings and never raises, so the plan is still generated.
-
-- Pending tasks are grouped by `(due_date, preferred_time)`, and every pair inside a group is reported. It checks within one pet and across pets, with a different message for each.
-- Completed tasks, untimed tasks and tasks on different days are ignored.
-- Example: `Conflict across Rex and Mia at 07:30 on 2026-10-18: 'Morning walk' and 'Flea treatment'`.
-- **Limitation:** it matches exact start times only. A 30-minute task at 07:30 and another at 07:45 overlap but are not flagged. See the tradeoff in `reflection.md`.
-- `generate_plan()` does not act on conflicts; call `find_conflicts()` alongside it to surface them.
-
-### Recurring tasks
-
-- `Task.due_date` (default: today) records when an occurrence is due.
-- `Task.next_occurrence(new_id)` returns a not-completed copy due one period later: 1 day for `"daily"`, 7 days for `"weekly"`. It returns `None` for `"once"`.
-- `Scheduler.complete_task(task_id)` marks the task complete and, if it recurs, adds the next occurrence to the same pet. The new task's id is one more than the largest id across all pets. It returns the new task, `None` for one-off tasks, and raises `KeyError` for an unknown id.
-- The next due date is the old `due_date` plus the period, not today plus the period, so a late completion does not shift the schedule.
-- `generate_plan()` skips tasks whose `due_date` is after today, so tomorrow's copy does not appear in today's plan.
-- Calling `task.mark_complete()` directly does not create a follow-up, because a task does not know which pet owns it. Use `scheduler.complete_task()`.
-
-## 📸 Demo Walkthrough
-
-### Running it
-
-```bash
-streamlit run app.py   # web UI
-python main.py         # terminal demo
-```
-
-### Main UI features (`app.py`)
-
-| Section | What the user can do |
-|---------|----------------------|
-| **Owner** | Set the owner name and the minutes available today. |
-| **Pets** | Add a pet (name, species, age, optional special needs) and see all pets with their task counts. |
-| **Tasks** | Add a task to a pet: title, category, frequency (daily/weekly/once), duration, priority, and optional preferred time (`HH:MM`). |
-| **Task table** | Filter by pet and status (pending/completed), sort by time of day or priority, and see conflict warnings above the table. |
-| **Mark a task done** | Complete a pending task; a daily/weekly task automatically gets its next occurrence. |
-| **Build Schedule** | Generate today's plan: scheduled tasks in time order with reasons, a minutes-used progress bar, and any skipped tasks. |
-
-### Example workflow
-
-1. **Set up the owner:** enter a name and, say, 90 minutes available today.
-2. **Add a pet:** add "Rex" (dog, 4). Add a second pet, "Mia" (cat, 2), if you like.
-3. **Schedule tasks:** add "Morning walk" (30 min, high, 07:30, daily) to Rex and "Brush fur" (25 min, low, 19:00, weekly) to Mia.
-4. **Trigger a conflict:** add "Flea treatment" to Mia at 07:30. A warning appears naming both tasks and suggesting you change one time.
-5. **Review the task list:** sort by time of day (untimed tasks go last) or filter to just Rex's pending tasks.
-6. **Generate the schedule:** click "Generate schedule" to see today's plan, the minutes used, and a reason for each task. Anything that exceeds your available time is listed as skipped.
-7. **Complete a task:** mark "Morning walk" done. A new one is created for tomorrow and stays out of today's plan.
-
-### Scheduler behaviors on display
-
-- **Priority-first planning:** high-priority tasks are placed before low-priority ones when time is tight.
-- **Sorting by time:** the final schedule and the sorted task list are chronological, with untimed tasks last.
-- **Filtering:** by pet, completion status, or both.
-- **Conflict warnings:** same-time tasks are reported, within one pet and across pets, without stopping the plan.
-- **Skipped tasks with reasons:** below, "Fetch in the yard" is skipped because only 10 of its 15 minutes remain.
-- **Recurrence:** completing a daily/weekly task adds the next occurrence, due one period after the old due date.
-
-### Sample CLI output (`python main.py`)
-
-`main.py` builds an owner (Jordan, 90 min) with two pets, adds tasks deliberately out of order, then prints the plan, the sorting and filtering results, and a conflict check before and after two clashing tasks are added.
+**2. Age and existing tasks are respected.** Input: Rex, dog, age 10, special needs `arthritis`, already has "Morning walk" (08:00).
 
 ```
-==================================================
-Today's Schedule for Jordan (2026-10-18)
-Time available: 90 min | Pets: Rex, Mia
-==================================================
-[ ] 07:30  Morning walk           Rex    30 min  [high]
-[ ] 17:00  Training session       Rex    20 min  [medium]
-[ ] 19:00  Brush fur              Mia    25 min  [low]
-[ ] 21:00  Vet-prescribed meds    Mia     5 min  [high]
-
-Skipped:
-  Fetch in the yard (Rex): needs 15 min but only 10 left
---------------------------------------------------
-Total scheduled: 80 min
-
-All tasks as added (unsorted):
-[ ] 17:00  Training session       Rex    20 min  [medium]
-[ ] --:--  Fetch in the yard      Rex    15 min  [low]
-[ ] 07:30  Morning walk           Rex    30 min  [high]
-[ ] 21:00  Vet-prescribed meds    Mia     5 min  [high]
-[ ] 19:00  Brush fur              Mia    25 min  [low]
-[x] 08:00  Breakfast              Mia    10 min  [high]
-
-All tasks via sort_by_time:
-[ ] 07:30  Morning walk           Rex    30 min  [high]
-[x] 08:00  Breakfast              Mia    10 min  [high]
-[ ] 17:00  Training session       Rex    20 min  [medium]
-[ ] 19:00  Brush fur              Mia    25 min  [low]
-[ ] 21:00  Vet-prescribed meds    Mia     5 min  [high]
-[ ] --:--  Fetch in the yard      Rex    15 min  [low]
-
-filter_tasks(completed=True):
-[x] 08:00  Breakfast              Mia    10 min  [high]
-
-filter_tasks(completed=False):
-[ ] 17:00  Training session       Rex    20 min  [medium]
-[ ] --:--  Fetch in the yard      Rex    15 min  [low]
-[ ] 07:30  Morning walk           Rex    30 min  [high]
-[ ] 21:00  Vet-prescribed meds    Mia     5 min  [high]
-[ ] 19:00  Brush fur              Mia    25 min  [low]
-
-filter_tasks(pet_name='rex'), sorted by time:
-[ ] 07:30  Morning walk           Rex    30 min  [high]
-[ ] 17:00  Training session       Rex    20 min  [medium]
-[ ] --:--  Fetch in the yard      Rex    15 min  [low]
-
-filter_tasks(completed=False, pet_name='Mia'):
-[ ] 21:00  Vet-prescribed meds    Mia     5 min  [high]
-[ ] 19:00  Brush fur              Mia    25 min  [low]
-
-Conflict check (before adding clashing tasks):
-  none
-
-Conflict check (after adding two clashing tasks):
-  WARNING: Conflict for Rex at 17:00 on 2026-10-18: 'Training session' and 'Teeth brushing'
-  WARNING: Conflict across Rex and Mia at 07:30 on 2026-10-18: 'Morning walk' and 'Flea treatment'
-  OK: both conflicts detected as expected.
+Rex: Give joint supplement  5 min HIGH  daily          fits today   [source: med-arthritis]
+   note: 08:00 clashed with another task; time cleared
+Rex: Feed breakfast        10 min HIGH  daily 07:00    fits today   [source: dog-feeding]
+Rex: Brush coat            10 min LOW   weekly         fits today   [source: dog-grooming]
 ```
 
-**Screenshot or video** *(optional)*: <!-- Insert a screenshot or link to a demo video here -->
+No second walk was suggested because the dog already has one, and no puppy or cat guidance was retrieved.
+
+**3. The self-check warns when the day is too full.** Input: owner has only 15 minutes; Bun (rabbit, `other`, age 2) and Mia (cat, age 3).
+
+```
+WARNING: High-priority 'Spot-clean habitat and refresh water' for Bun won't fit today;
+         consider increasing available minutes.
+Bun: Spot-clean habitat and refresh water  10 min HIGH    won't fit today
+Mia: Feed cat and refresh water             5 min HIGH    fits today
+Mia: Scoop litter box                       5 min HIGH    fits today
+Mia: Interactive play session              15 min MEDIUM  won't fit today
+...
+```
+
+**4. Failure handling.** If the model call errors, refuses, or returns invalid JSON, the advisor logs the problem, shows "AI model unavailable for Mia; used built-in guidance", and returns offline suggestions instead of crashing (covered by `test_llm_failure_falls_back_to_offline` and `test_garbage_llm_output_falls_back`).
+
+## Design decisions and trade-offs
+
+- **Retrieval before generation, and a citation requirement.** The model may only use passages the retriever returned, and every suggestion must name one. This reduces invented advice and makes each suggestion traceable. The cost is that the advisor is only as good as the knowledge base.
+- **TF-IDF instead of embeddings.** Sixteen short passages don't justify a vector database or a second API. TF-IDF is dependency-free, deterministic and easy to test. The trade-off is lexical matching: "limping" will not match "arthritis" unless the passage lists both. I mitigated this with keyword lists and by filtering on structured fields (species, age) first.
+- **Offline mode is a first-class path.** The app, tests and eval all run with no API key, so anyone can reproduce results. The trade-off is two generators to keep consistent, which the eval checks.
+- **Human approval for every change.** Suggestions are never added automatically. A pet-care tool that silently edits medication schedules would be a bad trade for a little convenience.
+- **Validation in code, not in the prompt.** I treat model output as untrusted input. A prompt can ask for valid JSON; only code can guarantee it.
+- **Self-check reuses the real scheduler.** Rather than asking the model whether a suggestion fits, `_check()` runs `Scheduler.generate_plan()` on a copy of the data. That is cheaper and exact. The trade-off is that it only fixes same-start-time clashes (the scheduler's existing limitation).
+- **Kept the original engine untouched.** The advisor sits beside `pawpal_system.py` and produces ordinary `Task`s, so all 44 original tests still pass unchanged.
+
+## Testing summary
+
+| Layer | What it covers | Result |
+|-------|----------------|--------|
+| `tests/test_pawpal.py` (44) | Original scheduler: sorting, recurrence, conflicts, planning, validation | All pass |
+| `tests/test_advisor.py` (11) | Species/age filtering, special needs driving retrieval, no duplicate tasks, guardrail rejections, JSON parsing, a fake LLM (valid, hallucinated and failing output), time-clash repair, overflow flagging | All pass |
+| `eval_advisor.py` | 6 pet scenarios: right passages cited, wrong species/age excluded, special-needs tasks high priority, repeated runs consistent | 6/6 offline |
+
+**What worked.** Injecting a fake LLM made the model path testable without network calls, and the citation check reliably catches hallucinated sources. Filtering by species and age before ranking kept results clean.
+
+**What didn't, at first.** The eval's first run failed for pet species `other`: the query contained the word "other", which matched nothing in the knowledge base, so a rabbit got no advice at all. I fixed it by expanding that species into habitat-related words in the query (`SPECIES_HINTS`) and added a regression test.
+
+**Not yet verified.** I have not run `eval_advisor.py --llm` against the live API, so Claude's consistency and quality are untested; the offline numbers above do not speak to them. The knowledge base is small and was not veterinarian-reviewed, so the advisor should be read as a reminder tool, not medical advice.
+
+**What I learned.** An eval is worth building early: it found a real bug that unit tests with hand-picked inputs had missed. Testing the guardrails matters more than testing the model, because the guardrails are what you control.
+
+## Reflection
+
+This project changed how I think about "adding AI" to an application. The model was the smallest part. Most of the work was deciding what it is allowed to see (retrieval), what it is allowed to say (citations and validation), what happens when it fails (fallback), and who has the last word (the owner). I also saw how much a deterministic baseline helps: the offline generator gave me something to test against, a safe fallback, and a way to tell whether the model was adding value or just noise. Next steps would be a larger, expert-reviewed knowledge base, embedding-based retrieval, overlap-aware conflict detection, and running the `--llm` eval regularly to track model quality.
+
+A fuller account of how I worked with AI on this project, what I accepted and rejected, and the system's limitations is in `model_card.md`.
+
+## Project layout
+
+```
+app.py                 Streamlit UI (scheduler + AI Care Advisor)
+advisor.py             Retrieval-augmented generation, guardrails, self-check
+rag.py                 Knowledge-base loader and TF-IDF retriever
+knowledge/pet_care.json  Care guidance passages
+pawpal_system.py       Original PawPal+ scheduling engine
+main.py                Terminal demo of the scheduler
+eval_advisor.py        Scenario-based reliability eval
+logging_setup.py       Logging configuration
+tests/                 pytest suites (scheduler + advisor)
+diagrams/              system.mmd (this system), uml.mmd (original classes)
+docs/                  Original PawPal+ documentation
+```
