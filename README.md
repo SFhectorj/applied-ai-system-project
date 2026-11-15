@@ -79,6 +79,8 @@ pet profile ──▶ RETRIEVE (rag.py) ──▶ GENERATE (Claude or offline) �
 
 Logging goes to `pawpal.log` (retrieval scores, LLM request ids and token counts, rejected suggestions); warnings also print to the console.
 
+System diagram (Mermaid source): [`diagrams/system.mmd`](diagrams/system.mmd). Humans check AI output at the *Add* button (nothing is added to the schedule without approval); automated checks are the guardrails, the self-check step, `pytest` and `eval_advisor.py`.
+
 ### Reliability testing
 
 ```bash

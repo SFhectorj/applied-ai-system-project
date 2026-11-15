@@ -1,0 +1,66 @@
+flowchart TD
+    %% ---------- INPUT ----------
+    subgraph INPUT["Input"]
+        Owner["Owner enters pets, tasks,<br/>special needs, available minutes<br/>(Streamlit app.py)"]
+        KBFile[("knowledge/pet_care.json<br/>care guidance")]
+    end
+
+    %% ---------- AI PIPELINE ----------
+    subgraph AI["AI Care Advisor (advisor.py)"]
+        Query["Build query<br/>species + life stage + special needs"]
+        Retriever["Retriever (rag.py)<br/>filter by species/age,<br/>TF-IDF rank, drop covered topics"]
+        Generator{"API key set?"}
+        LLM["Claude generates JSON suggestions<br/>grounded in retrieved passages"]
+        Offline["Offline generator<br/>suggestions from same passages"]
+        Guardrails["Guardrails: validate<br/>cites retrieved source, valid values,<br/>no duplicates, capped count"]
+        Checker["Agentic self-check<br/>simulate plan on a copy,<br/>repair time clashes, flag overflow"]
+    end
+
+    %% ---------- CORE SCHEDULER ----------
+    subgraph CORE["Scheduling engine (pawpal_system.py)"]
+        Scheduler["Scheduler<br/>sort, conflicts, generate_plan"]
+        Plan["DailyPlan<br/>scheduled + skipped + reasons"]
+    end
+
+    %% ---------- OUTPUT ----------
+    subgraph OUTPUT["Output"]
+        Suggestions["Suggestions with source,<br/>rationale, fits-today flag, warnings"]
+        FinalPlan["Daily schedule shown in UI"]
+    end
+
+    %% ---------- TESTING ----------
+    subgraph TESTING["Testing and monitoring"]
+        Pytest["pytest suite<br/>retrieval, guardrails, fake-LLM,<br/>fallback, self-check, scheduler"]
+        Eval["eval_advisor.py<br/>6 scenarios, consistency over 3 runs<br/>non-zero exit on failure"]
+        Log[("pawpal.log<br/>scores, request ids, rejections")]
+    end
+
+    Human(["Human reviewer: owner"])
+
+    %% data flow
+    Owner --> Query --> Retriever
+    KBFile --> Retriever
+    Retriever --> Generator
+    Generator -- yes --> LLM
+    Generator -- no --> Offline
+    LLM -- "error / refusal / bad JSON" --> Offline
+    LLM --> Guardrails
+    Offline --> Guardrails
+    Guardrails -- "rejected items dropped" --> Log
+    Guardrails --> Checker
+    Checker <--> Scheduler
+    Checker --> Suggestions
+    Suggestions --> Human
+    Human -- "clicks Add (approve)" --> Owner
+    Owner -- "approved tasks" --> Scheduler
+    Scheduler --> Plan --> FinalPlan
+    FinalPlan --> Human
+
+    %% testing hooks
+    Pytest -. "tests" .-> Retriever
+    Pytest -. "tests" .-> Guardrails
+    Pytest -. "tests" .-> Scheduler
+    Eval -. "runs advisor end to end" .-> AI
+    Retriever -.-> Log
+    LLM -.-> Log
+    Checker -.-> Log
