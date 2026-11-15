@@ -63,6 +63,42 @@ Task ids are only unique within a pet. `DailyPlan.explanations` is keyed by task
 - **Input validation:** invalid priority/frequency, duplicate task ids within a pet, and negative availability raise clear errors.
 - **Streamlit UI:** add pets and tasks, filter and sort the task table, see conflict warnings, mark tasks done, and generate the schedule.
 
+
+## 🤖 AI Care Advisor (RAG + self-check)
+
+The advisor adds retrieval-augmented AI to the scheduler. It is wired into the Streamlit app ("AI Care Advisor" section) and its suggestions become real `Task`s that flow through the same `Scheduler`.
+
+```
+pet profile ──▶ RETRIEVE (rag.py) ──▶ GENERATE (Claude or offline) ──▶ VALIDATE ──▶ CHECK (Scheduler sim) ──▶ suggestions
+```
+
+1. **Retrieve** (`rag.py`): `knowledge/pet_care.json` holds care guidance. Passages are filtered by species and age, then ranked by TF-IDF cosine similarity against a query built from the pet (species, life stage, special needs). Topics a pet already has tasks for are dropped.
+2. **Generate** (`advisor.py`): the retrieved passages are the *only* source the model may use. With `ANTHROPIC_API_KEY` set, Claude (`claude-opus-5-5`, override with `PAWPAL_MODEL`) returns JSON suggestions that must cite a passage id. Without a key, a deterministic offline generator builds suggestions from the same passages. Different pets and special needs retrieve different passages, so the output genuinely changes (a diabetic cat gets a high-priority insulin task; a healthy one does not).
+3. **Validate (guardrails)**: each suggestion must cite a retrieved passage, have valid priority/frequency/duration/`HH:MM`, and not duplicate an existing task. Invalid ones are dropped and logged. If the model call fails, returns garbage or refuses, the advisor falls back to offline mode with a warning instead of crashing.
+4. **Check (agentic step)**: the advisor simulates the plan on a copy of the owner's data, clears preferred times that clash with existing tasks, and flags suggestions (especially high-priority ones) that don't fit the available minutes.
+
+Logging goes to `pawpal.log` (retrieval scores, LLM request ids and token counts, rejected suggestions); warnings also print to the console.
+
+### Reliability testing
+
+```bash
+python eval_advisor.py          # 6 scenarios, deterministic, no key needed
+python eval_advisor.py --llm    # same scenarios against Claude, 3 runs each, reports consistency
+pytest                          # includes tests/test_advisor.py (fake LLM, guardrails, fallback)
+```
+
+The eval checks that the right guidance is cited, wrong-species/age guidance is not, and special-needs tasks are high priority. It already caught one bug (pets of species "other" retrieved nothing). The script exits non-zero on failure.
+
+### Setup and run
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=...     # optional; omit to use built-in guidance
+streamlit run app.py
+```
+
 ## Getting started
 
 ### Setup

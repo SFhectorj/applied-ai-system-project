@@ -1,5 +1,10 @@
 import streamlit as st
+
+from advisor import CareAdvisor
+from logging_setup import setup_logging
 from pawpal_system import Owner, Pet, Scheduler, Task
+
+setup_logging()
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -210,3 +215,52 @@ if st.button("Generate schedule"):
                 "Increase your minutes or shorten/reschedule these."
             )
             st.table(plan_rows(plan.skipped_tasks))
+
+
+st.divider()
+st.subheader("🤖 AI Care Advisor")
+st.caption(
+    "Retrieves pet-care guidance for each pet's species, age and special needs, then "
+    "suggests tasks grounded in it and checks they fit your day. Uses Claude when "
+    "ANTHROPIC_API_KEY is set, otherwise built-in guidance."
+)
+
+
+@st.cache_resource
+def get_advisor() -> CareAdvisor:
+    return CareAdvisor()
+
+
+if st.button("Get care suggestions"):
+    if not owner.pets:
+        st.info("Add a pet first.")
+    else:
+        try:
+            with st.spinner("Retrieving guidance and checking your schedule..."):
+                st.session_state.advice = get_advisor().advise(owner)
+        except Exception as exc:  # never let the AI feature take the app down
+            st.error(f"Advisor failed safely: {exc}")
+
+advice = st.session_state.get("advice")
+if advice:
+    st.caption(f"Mode: {'Claude + retrieval' if advice.mode == 'llm' else 'built-in guidance + retrieval'}")
+    for w in advice.warnings:
+        st.warning(w)
+    if not advice.suggestions:
+        st.success("Nothing new to suggest. Your tasks already cover the guidance.")
+    for i, s in enumerate(advice.suggestions):
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            fit = "✅ fits today" if s.fits else "⚠️ won't fit today"
+            st.markdown(
+                f"**{s.pet_name}: {s.title}** ({s.duration_minutes} min, {PRIORITY_BADGE[s.priority]}, "
+                f"{s.frequency}{', ' + s.preferred_time if s.preferred_time else ''}) {fit}"
+            )
+            st.caption(f"{s.rationale} _Source: {s.source_id}_" + "".join(f" · {n}" for n in s.notes))
+        with c2:
+            if st.button("Add", key=f"add_{i}_{s.pet_name}_{s.title}"):
+                pet = next(p for p in owner.pets if p.name == s.pet_name)
+                pet.add_task(s.to_task(next_task_id()))
+                advice.suggestions.remove(s)
+                st.session_state.flash = f"Added '{s.title}' to {s.pet_name}."
+                st.rerun()
